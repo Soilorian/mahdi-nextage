@@ -1,0 +1,16 @@
+format: ChoreonoidBody
+formatVersion: 1.0
+name: PracticeBall
+rootLink: PracticeBall
+links:
+  -
+    name: PracticeBall
+    jointType: free
+    mass: 0.023
+    inertia: [ 0.00000368, 0, 0, 0, 0.00000368, 0, 0, 0, 0.00000368 ]
+    elements:
+      Shape:
+        geometry: { type: Sphere, radius: 0.020 }
+        appearance:
+          material:
+            diffuseColor: [ 0.96, 0.91, 0.74 ]

@@ -1,0 +1,22 @@
+# Choreonoid 1.7 contact-material format (camelCase keys).
+# All links in this demo except the sample floor currently use Default (ID 0).
+materials:
+  -
+    name: Default
+    roughness: 1.0
+    viscosity: 0.0
+  -
+    name: Ground
+    roughness: 0.5
+    viscosity: 0.0
+
+contactMaterials:
+  -
+    materials: [ Default, Default ]
+    staticFriction: 1.5
+    dynamicFriction: 1.2
+    restitution: 0.0
+  -
+    materials: [ Ground, Default ]
+    friction: 0.5
+    restitution: 0.0
