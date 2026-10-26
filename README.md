@@ -1,3 +1,5 @@
+For the first run with bpbot-lab and choreonoid-1.7.0-lab, start with [NextageManual/README.md](NextageManual/README.md).
+
 # Real-model ball pickup: Choreonoid 1.7 / Ubuntu 18.04
 
 This scene uses the **unchanged** `/home/mahdi/nextage/model/main_dualarm_regrasp.wrl` robot and its actual `LHAND_L` / `LHAND_R` sliding fingers. It is an offline physics simulation. The robot faces world **+X**. The ball center starts around `(0.50, 0.23, 1.31)` metres: in front of the torso, in the left arm's reachable lane.
