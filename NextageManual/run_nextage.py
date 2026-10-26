@@ -1,15 +1,21 @@
-#!/usr/bin/env python
-"""Open and close the left gripper, then lift the left wrist 5 cm.
+#!/usr/bin/env python3
+"""Preview or play one NEXTAGE motion: open left hand, close it, lift 5 cm.
 
-Set "mode" in run_nextage.json to "simulation" for a Choreonoid model preview,
-or "real" for the physical robot. No command-line flags are required.
+Set PLAY to 0 or 1 in run_nextage.json. Run this file as a Choreonoid Python
+Script item with the HIRO_dualarm model loaded. PLAY=1 uses bpbot's NxtRobot
+client, the same hardware interface used by Fujimoto_with_knotfile.py.
 """
-from __future__ import print_function
 import json
 import logging
+import math
 import os
 import sys
 import time
+
+import numpy as np
+from cnoid.Base import MessageView, RootItem
+from cnoid.Body import getCustomJointPath
+from cnoid.BodyPlugin import BodyItem
 
 
 log = logging.getLogger('run_nextage')
@@ -23,23 +29,21 @@ CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            'run_nextage.json')
 LIFT_METRES = 0.05
 LIFT_SECONDS = 5.0
+LIFT_STEPS = 50
+OPEN_LEFT = 3
+CLOSE_LEFT = 4
 
 
-def load_mode():
+def read_play():
     with open(CONFIG_FILE, 'r') as config_file:
         config = json.load(config_file)
-    mode = config.get('mode')
-    if mode not in ('simulation', 'real'):
-        raise ValueError('%s must set mode to "simulation" or "real"' % CONFIG_FILE)
-    return mode
+    play = config.get('PLAY')
+    if type(play) is not int or play not in (0, 1):
+        raise ValueError('%s must set PLAY to 0 or 1' % CONFIG_FILE)
+    return play
 
 
-def run_simulation():
-    import numpy as np
-    from cnoid.Base import RootItem, MessageView
-    from cnoid.Body import getCustomJointPath
-    from cnoid.BodyPlugin import BodyItem
-
+def get_robot_item():
     items = RootItem.instance.getDescendantItems(BodyItem)
     robots = [item for item in items
               if item.body.link('LARM_JOINT5') is not None
@@ -48,126 +52,148 @@ def run_simulation():
     if len(robots) != 1:
         raise RuntimeError('Load exactly one HIRO_dualarm robot BodyItem; found %d'
                            % len(robots))
-    robot_item = robots[0]
+    if robots[0].body.numJoints != 19:
+        raise RuntimeError('The bpbot motion interface expects 19 modeled joints')
+    return robots[0]
+
+
+def current_joints(body):
+    return [body.joint(i).q for i in range(body.numJoints)]
+
+
+def set_joints(robot_item, angles):
     body = robot_item.body
-    left_finger = body.link('LHAND_L')
-    right_finger = body.link('LHAND_R')
+    for i, angle in enumerate(angles):
+        body.joint(i).q = float(angle)
+    body.calcForwardKinematics()
+    robot_item.notifyKinematicStateChange()
+
+
+def motion_row(body, seconds, left_command=0):
+    # bpbot rows are [seconds, right command, left command, joints in degrees].
+    # The hand q values are also stored in the joint columns for model playback;
+    # bpbot's robot server ignores those finger columns and uses left_command.
+    return [float(seconds), 0, left_command] + [
+        math.degrees(q) for q in current_joints(body)]
+
+
+def sync_model_to_robot(robot_item, nxt):
+    # bpbot's getJointAngles reads getActualState().command, not encoders.
+    reported = list(nxt.getJointAngles())
+    body = robot_item.body
+    if len(reported) not in (15, body.numJoints):
+        raise RuntimeError('Robot reported %d joints; expected 15 or %d'
+                           % (len(reported), body.numJoints))
+    angles = current_joints(body)
+    angles[:len(reported)] = [float(q) for q in reported]
+    set_joints(robot_item, angles)
+    log.info('Model seeded from bpbot reported joint commands: %d joints',
+             len(reported))
+
+
+def build_motion(robot_item):
+    body = robot_item.body
     wrist = body.link('LARM_JOINT5')
     chest = body.link('CHEST_JOINT0')
     if chest is None:
         raise RuntimeError('The loaded robot lacks CHEST_JOINT0')
-    log.info('Simulation: using robot BodyItem %s', robot_item.name)
-
-    # The two modeled fingers slide in metres: +/-0.025 is open; zero is closed.
-    def move_fingers(left_target, right_target, description):
-        left_start, right_start = left_finger.q, right_finger.q
-        log.info('%s modeled left gripper over 1 second', description)
-        for frame in range(1, 11):
-            fraction = frame / 10.0
-            left_finger.q = left_start + (left_target - left_start) * fraction
-            right_finger.q = right_start + (right_target - right_start) * fraction
-            body.calcForwardKinematics()
-            robot_item.notifyKinematicStateChange()
-            MessageView.instance.flush()
-            time.sleep(0.1)
-
-    log.info('Modeled finger positions [m]: left=%s, right=%s',
-             left_finger.q, right_finger.q)
-    move_fingers(0.025, -0.025, 'Opening')
-    move_fingers(0.0, 0.0, 'Closing')
-
-    # A 4x4 target is required by the Choreonoid Position binding.
-    body.calcForwardKinematics()
-    start_position = np.array(wrist.p, copy=True)
-    start_rotation = np.array(wrist.R, copy=True)
-    log.info('Modeled wrist position [m]: %s', start_position.tolist())
-    log.info('Requested wrist target [m]: %s',
-             (start_position + np.array([0.0, 0.0, LIFT_METRES])).tolist())
-    path = getCustomJointPath(body, chest, wrist)
-    if path is None or path.numJoints != 6:
-        raise RuntimeError('Could not make a six-joint left-arm IK path')
-    start_angles = [path.joint(i).q for i in range(6)]
-    planned_angles = []
-
-    # Plan the whole lift first so an unreachable target does not produce a
-    # partial animated arm move.
+    left_finger = body.link('LHAND_L')
+    right_finger = body.link('LHAND_R')
+    start_angles = current_joints(body)
+    rows = []
     try:
-        for frame in range(1, 51):
+        # Model fingers slide in metres: +/-0.025 open, zero closed.
+        left_finger.q = 0.025
+        right_finger.q = -0.025
+        body.calcForwardKinematics()
+        rows.append(motion_row(body, 1.0, OPEN_LEFT))
+        log.info('Planned left-hand open row (command 3)')
+
+        left_finger.q = 0.0
+        right_finger.q = 0.0
+        body.calcForwardKinematics()
+        rows.append(motion_row(body, 1.0, CLOSE_LEFT))
+        log.info('Planned left-hand close row (command 4)')
+
+        start_position = np.array(wrist.p, copy=True)
+        start_rotation = np.array(wrist.R, copy=True)
+        log.info('Starting wrist position [m]: %s', start_position.tolist())
+        log.info('Target wrist position [m]: %s',
+                 (start_position + np.array([0.0, 0.0, LIFT_METRES])).tolist())
+        path = getCustomJointPath(body, chest, wrist)
+        if path is None or path.numJoints != 6:
+            raise RuntimeError('Could not make a six-joint left-arm IK path')
+        for frame in range(1, LIFT_STEPS + 1):
             target = np.eye(4)
             target[:3, :3] = start_rotation
             target[:3, 3] = start_position
-            target[2, 3] += LIFT_METRES * frame / 50.0
+            target[2, 3] += LIFT_METRES * frame / LIFT_STEPS
             if not path.calcInverseKinematics(target):
-                raise RuntimeError('Left-arm IK failed at lift step %d/50' % frame)
+                raise RuntimeError('Left-arm IK failed at lift step %d/%d'
+                                   % (frame, LIFT_STEPS))
             body.calcForwardKinematics()
-            planned_angles.append([path.joint(i).q for i in range(6)])
+            rows.append(motion_row(body, LIFT_SECONDS / LIFT_STEPS))
+        log.info('Planned %d motion rows (2 hand rows, %d lift rows)',
+                 len(rows), LIFT_STEPS)
+        return rows
     finally:
-        for i, angle in enumerate(start_angles):
-            path.joint(i).q = angle
-        body.calcForwardKinematics()
-        robot_item.notifyKinematicStateChange()
-
-    log.info('IK planned 50 lift steps; previewing over 5 seconds')
-    for frame, angles in enumerate(planned_angles, 1):
-        for i, angle in enumerate(angles):
-            path.joint(i).q = angle
-        body.calcForwardKinematics()
-        robot_item.notifyKinematicStateChange()
-        MessageView.instance.flush()
-        time.sleep(LIFT_SECONDS / 50.0)
-        if frame % 10 == 0:
-            log.debug('Lift preview: %d/50 steps', frame)
-    log.info('Modeled wrist ended at [m]: %s', list(wrist.p))
-    log.info('Choreonoid kinematic preview completed')
+        # Planning must not leave the visible model at the final pose.
+        set_joints(robot_item, start_angles)
 
 
-def run_real():
-    from hrpsys import rtm
-    from nextage_ros_bridge import nextage_client
+def preview_motion(robot_item, rows):
+    log.info('PLAY=0: previewing the motion on the Choreonoid model')
+    previous = current_joints(robot_item.body)
+    for index, row in enumerate(rows, 1):
+        target = [math.radians(value) for value in row[3:]]
+        frames = max(1, int(round(row[0] * 10.0)))
+        for frame in range(1, frames + 1):
+            fraction = frame / float(frames)
+            angles = [a + (b - a) * fraction for a, b in zip(previous, target)]
+            set_joints(robot_item, angles)
+            MessageView.instance.flush()
+            time.sleep(row[0] / frames)
+        previous = target
+        if index in (1, 2, len(rows)) or index % 10 == 0:
+            log.debug('Previewed motion row %d/%d', index, len(rows))
+    log.info('Choreonoid preview completed')
 
-    # OpenRTM name service and robot name from bpbot's nxtrobot_server.py.
-    rtm.nshost = '192.168.128.10'
-    rtm.nsport = '15005'
-    log.info('Connecting to OpenRTM name service %s:%s', rtm.nshost, rtm.nsport)
-    robot = nextage_client.NextageClient()
-    log.debug('Initializing NEXTAGE client for RobotHardware0')
-    robot.init(robotname='RobotHardware0', url='')
-    log.info('NEXTAGE client initialized')
 
-    # The physical left hand uses pneumatic commands, not model finger q.
-    log.info('Opening physical left gripper')
-    robot.gripper_l_open()
-    log.debug('Open command returned; waiting 1 second for the hand')
-    time.sleep(1.0)
-    log.info('Closing physical left gripper')
-    robot.gripper_l_close()
-    log.debug('Close command returned; waiting 1 second for the hand')
-    time.sleep(1.0)
-
-    log.debug('Reading reported LARM_JOINT5 position and orientation')
-    position = list(robot.getCurrentPosition('LARM_JOINT5'))
-    orientation = list(robot.getCurrentRPY('LARM_JOINT5'))
-    log.info('Reported wrist position [m]: %s', position)
-    log.info('Reported wrist orientation [rad]: %s', orientation)
-    position[2] += LIFT_METRES
-    log.info('Requested wrist target [m]: %s (Z increased by 0.05 m)', position)
-    log.info('Requesting 5-second left-arm lift')
-    accepted = robot.setTargetPose('larm', position, orientation, LIFT_SECONDS)
-    log.debug('setTargetPose returned: %r', accepted)
-    if not accepted:
-        raise RuntimeError('NEXTAGE rejected the left-hand lift target')
-    log.info('Waiting for left-arm interpolation to finish')
-    robot.waitInterpolationOfGroup('larm')
-    log.info('Physical left gripper open, close, and 5 cm lift request completed')
+def play_on_robot(nxt, rows):
+    log.info('PLAY=1: sending %d rows through bpbot NxtRobot.playMotion', len(rows))
+    nxt.playMotion(rows)
+    # This readback is the controller's command state, not measured encoder motion.
+    reported = list(nxt.getJointAngles())
+    expected = [math.radians(value) for value in rows[-1][3:]]
+    if len(reported) < 15:
+        raise RuntimeError('Robot returned too few joint commands after playback')
+    error = max(abs(float(reported[i]) - expected[i]) for i in range(9, 15))
+    log.info('Largest left-arm command-state difference [rad]: %.6f', error)
+    if error > 0.05:
+        raise RuntimeError('Robot command state did not reach the planned left-arm target')
+    log.info('bpbot playback returned; physical motion was not independently measured')
 
 
 def main():
-    mode = load_mode()
-    log.info('Selected mode: %s', mode)
-    if mode == 'simulation':
-        run_simulation()
+    play = read_play()
+    log.info('PLAY=%d (%s)', play, 'robot via bpbot' if play else 'Choreonoid preview')
+    robot_item = get_robot_item()
+    log.info('Using robot BodyItem %s', robot_item.name)
+    nxt = None
+    if play:
+        import bpbot
+        # bpbot's generated protobuf modules use absolute imports.
+        nxt_dir = os.path.join(os.path.dirname(bpbot.__file__), 'robotcon', 'nxt')
+        if nxt_dir not in sys.path:
+            sys.path.insert(0, nxt_dir)
+        from bpbot.robotcon.nxt.nxtrobot_client import NxtRobot
+        nxt = NxtRobot(host='[::]:15005')
+        sync_model_to_robot(robot_item, nxt)
+    rows = build_motion(robot_item)
+    if play:
+        play_on_robot(nxt, rows)
     else:
-        run_real()
+        preview_motion(robot_item, rows)
 
 
 if __name__ == '__main__':

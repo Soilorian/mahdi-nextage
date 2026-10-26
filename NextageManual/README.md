@@ -1,36 +1,36 @@
-# NEXTAGE first-run motion demo
+# NEXTAGE open, close, and lift demo
 
-This directory contains one control script, its mode setting, and an environment template. The demonstration has no object target: it opens the left gripper, closes it, then raises the left wrist by 5 cm from its reported or modeled starting position. It does not approach, hold, or move a ball.
+This directory has one motion program and one run setting. The program opens the left gripper, closes it, then moves the left wrist 5 cm upward. It does not detect, grab, or move any object.
+
+The script follows the playback structure in `bpbot-lab/example/Fujimoto_with_knotfile.py`: it builds motion rows once, previews them in Choreonoid when `PLAY=0`, and sends them through bpbot's `NxtRobot.playMotion()` when `PLAY=1`. The same model and inverse-kinematics calculation generate both modes' arm angles.
 
 | File | Purpose |
 |---|---|
-| `run_nextage.py` | One Python entry point for Choreonoid preview and real hardware |
-| `run_nextage.json` | Selects `simulation` or `real`; initially `simulation` |
-| `env.sh.example` | Template for the Choreonoid planning environment |
+| `run_nextage.py` | Plans and plays the open, close, lift sequence |
+| `run_nextage.json` | Selects `PLAY=0` or `PLAY=1` |
+| `env.sh.example` | Template for starting the lab Choreonoid environment |
 
-The robot model and project remain in the lab clones:
+The model and project are already in the lab clones:
 - Model: `/home/mahdi/nextage/choreonoid-1.7.0-lab/ext/graspPlugin/RobotModels/HIRO/HIRO_dualarm.yaml`
 - Project: `/home/mahdi/nextage/choreonoid-1.7.0-lab/ext/graspPlugin/BinPicking/project/waypoint_demo.cnoid`
-- Installation guide: `/home/mahdi/nextage/bpbot-lab/docs/new_pc_setup.en.md`
-- Lab hardware procedure: `/home/mahdi/nextage/bpbot-lab/docs/manual_lab_pc.md`
+- Setup guide: `/home/mahdi/nextage/bpbot-lab/docs/new_pc_setup.en.md`
+- Real-robot procedure: `/home/mahdi/nextage/bpbot-lab/docs/manual_lab_pc.md`
 
-Both lab clones must be on the `guides` branch. To inspect one, run `git -C /home/mahdi/nextage/bpbot-lab symbolic-ref --short HEAD`. `-C` selects that repository, `symbolic-ref` reads its checked-out branch reference, and `--short` prints just the branch name. Repeat with the Choreonoid clone path.
+## Select preview or hardware playback
 
-## Select a mode
-
-Open `/home/mahdi/nextage/mahdi-nextage/NextageManual/run_nextage.json`. It initially contains:
+Open `/home/mahdi/nextage/mahdi-nextage/NextageManual/run_nextage.json`. Initially it contains:
 
 ```json
 {
-  "mode": "simulation"
+  "PLAY": 0
 }
 ```
 
-The key `mode` chooses one branch of `run_nextage.py`. Keep `simulation` while using Choreonoid. Change only the value to `real` for hardware; there are no command-line flags. A missing or misspelled value stops the script before any robot command.
+`PLAY` is the program's mode value. `0` means preview the model only, with no bpbot robot connection. `1` means send the motion to the real robot through bpbot. The file must contain exactly an integer `0` or `1`; another value stops execution. This is a separate setting from bpbot's `config/run_local.yaml`, so changing it will not change Fujimoto's experiments. There are no command-line flags.
 
-## Preview in Choreonoid
+## Preview with PLAY=0
 
-1. Follow `bpbot-lab/docs/new_pc_setup.en.md` to build the lab Choreonoid and environment. The source clone alone cannot run. In this Ubuntu WSL checkout, the built lab executable and its Python environment were not available for a GUI test.
+1. Follow the lab setup guide to install the required environment and build Choreonoid. This WSL checkout has the source but no built lab Choreonoid GUI, so GUI execution could not be checked here.
 2. In an Ubuntu terminal run:
 
 ```bash
@@ -39,20 +39,22 @@ cd /home/mahdi/nextage/choreonoid-1.7.0-lab
 cnoid ext/graspPlugin/BinPicking/project/waypoint_demo.cnoid
 ```
 
-`source` loads the environment into this terminal. `cd` changes to the Choreonoid checkout so the project path resolves. `cnoid` is the launcher defined by `env.sh`; the argument is the project file that loads the HIRO model. The project also contains a different, waypoint-demo Python Script item; untick that item so it cannot execute when you test the new script.
+`source` loads the Python and plugin environment into this terminal. `cd` selects the Choreonoid checkout. `cnoid` is the launcher defined in `env.sh`; its argument is the project file that loads the HIRO model.
 
-3. In Choreonoid, select the World item, choose **File → Load → Python Script**, and select `/home/mahdi/nextage/mahdi-nextage/NextageManual/run_nextage.py`. Select and tick the new Python Script item, then press the red **Execute script** button. Watch the Message view for the logged opening, closing, IK planning, lift preview, and completion. Save the project from Choreonoid if you want it to remember the added script item.
+3. The project includes a different Python Script item named `waypoint_demo.py`. Untick it. In Choreonoid select World, use **File → Load → Python Script**, and choose `/home/mahdi/nextage/mahdi-nextage/NextageManual/run_nextage.py`. Select and tick the new item, then press the red **Execute script** button. The Message view shows `PLAY=0`, the planned wrist position and target, and the preview progress. You may save the Choreonoid project to remember this script item.
 
-The simulation mode changes the model's `LHAND_L` and `LHAND_R` sliding joints from open positions (`+0.025` and `-0.025` metres) to closed (`0` and `0` metres). It reads the displayed `LARM_JOINT5` wrist pose, plans a 5 cm upward path through 50 inverse-kinematics steps, and animates that path over 5 seconds. It does not contact the robot or run physics or collision checks. A successful preview shows that the model's inverse kinematics found this path from its current pose; it does not establish that the real workspace is clear.
+A successful preview animates the model's two sliding finger joints and then the left arm. It is a kinematic preview: it does not simulate physical contact or check collisions. The model's starting pose is whatever is displayed in Choreonoid when the script begins.
 
-## Run on the physical NEXTAGE
+## Hardware with PLAY=1
 
-After the lab's startup procedure has enabled the robot and you have checked the arm has a clear upward path, change `mode` in `run_nextage.json` to `real`. On the configured robot-control PC run:
+Use the lab's robot-startup procedure first. The bpbot robot server must already be running on the lab PC; the script uses `NxtRobot(host='[::]:15005')`, exactly as Fujimoto does. That host string addresses bpbot's gRPC server, whose port is `15005`. It is distinct from the robot controller's OpenRTM name service, which the server itself contacts.
 
-```bash
-/usr/bin/python2 /home/mahdi/nextage/mahdi-nextage/NextageManual/run_nextage.py
-```
+Change only `PLAY` in `run_nextage.json` to `1`. Run the **same Choreonoid Python Script item** on the lab PC. The script first calls bpbot's `getJointAngles()`, places those reported command angles into the Choreonoid model, plans all motion rows, then calls `playMotion()`. It does not use `goInitial()`: the lift is relative to the robot's reported starting command pose. `getJointAngles()` is backed by `getActualState().command` in this server, so it does not independently measure encoder position.
 
-`/usr/bin/python2` selects the lab's Python 2 interpreter. The path names this script. Real mode imports `hrpsys` and `nextage_ros_bridge`, connects to the OpenRTM name service at `192.168.128.10:15005` and `RobotHardware0`, opens and closes the left pneumatic gripper, reads the reported `LARM_JOINT5` position and orientation, and requests the same 5 cm Z lift over 5 seconds. It waits for left-arm interpolation to finish. This script does not enable servos, home the robot, check for obstacles, or verify that an object was grasped. Hardware mode has only been checked with a fake client here; it has not been run on the physical robot.
+Each row is `[seconds, right-hand command, left-hand command, joint angles in degrees]`. The open row uses left-hand command `3`; the close row uses `4`; arm rows use `0`. The Choreonoid preview reads the joint columns. On hardware, bpbot's `playMotion()` reads the hand-command columns and sends joint targets through its robot server. The open and close rows each last one second. Fifty arm rows of 0.1 seconds make the five-second lift.
 
-The Choreonoid Python Script item does not have a per-run argument field in this version, which is why this example uses `run_nextage.json`. For other experiments, you can read more keys from a config file in the same way.
+The script reads the bpbot command state again after playback and compares its left-arm values with the planned final row. This detects a command-state mismatch, but cannot prove physical motion or gripper actuation. Check that the robot is ready and its upward path is clear before `PLAY=1`; this example does not enable servos or perform collision checks.
+
+The Choreonoid Python Script item in this version does not expose a per-run argument field. The JSON file provides the `PLAY` setting without changing the launch command.
+
+Both modes were exercised only with fake Choreonoid and bpbot objects in this workspace. Neither the Choreonoid GUI nor the real robot has been run here.
