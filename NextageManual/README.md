@@ -1,24 +1,37 @@
-# NEXTAGE first run
+# NEXTAGE first-run motion demo
 
-This is the small first-run bundle for `/home/mahdi/nextage/mahdi-nextage`. It contains **one hardware Python file** and one small planning-environment template. The robot model, Choreonoid project, and planning example already live in the two lab clones; duplicating them here would make it harder to know which copy is active.
+This directory contains one control script, its mode setting, and an environment template. The demonstration has no object target: it opens the left gripper, closes it, then raises the left wrist by 5 cm from its reported or modeled starting position. It does not approach, hold, or move a ball.
 
-| Need | Existing location |
+| File | Purpose |
 |---|---|
-| Full installation guide | `/home/mahdi/nextage/bpbot-lab/docs/new_pc_setup.en.md` |
-| Simulation model | `/home/mahdi/nextage/choreonoid-1.7.0-lab/ext/graspPlugin/RobotModels/HIRO/HIRO_dualarm.yaml` |
-| Simulation project | `/home/mahdi/nextage/choreonoid-1.7.0-lab/ext/graspPlugin/BinPicking/project/waypoint_demo.cnoid` |
-| Its Python motion program | `/home/mahdi/nextage/bpbot-lab/example/waypoint_demo.py` |
-| Real-robot lab procedure | `/home/mahdi/nextage/bpbot-lab/docs/manual_lab_pc.md` |
-| One-file direct hardware example | `run_nextage.py` in this directory |
-| Planning launcher template for this clone layout | `env.sh.example` in this directory |
+| `run_nextage.py` | One Python entry point for Choreonoid preview and real hardware |
+| `run_nextage.json` | Selects `simulation` or `real`; initially `simulation` |
+| `env.sh.example` | Template for the Choreonoid planning environment |
 
-The two lab repositories need their **`guides`** branches. Check with `git -C /home/mahdi/nextage/bpbot-lab branch --show-current` and the same command for `choreonoid-1.7.0-lab`; `-C` tells Git which repository to inspect, and `--show-current` prints its active branch. If a clean clone is on another branch, run `git -C PATH checkout guides` for that clone. The Choreonoid clone's `ext/bpbot` link expects a sibling directory called `bpbot`; this checkout has `/home/mahdi/nextage/bpbot -> bpbot-lab`. On another checkout, create that alias with `cd /home/mahdi/nextage && ln -s bpbot-lab bpbot` only if `bpbot` does not already exist. `ln -s` creates a symbolic link, and the last two arguments are its target and name.
+The robot model and project remain in the lab clones:
+- Model: `/home/mahdi/nextage/choreonoid-1.7.0-lab/ext/graspPlugin/RobotModels/HIRO/HIRO_dualarm.yaml`
+- Project: `/home/mahdi/nextage/choreonoid-1.7.0-lab/ext/graspPlugin/BinPicking/project/waypoint_demo.cnoid`
+- Installation guide: `/home/mahdi/nextage/bpbot-lab/docs/new_pc_setup.en.md`
+- Lab hardware procedure: `/home/mahdi/nextage/bpbot-lab/docs/manual_lab_pc.md`
 
-## First execution: simulation
+Both lab clones must be on the `guides` branch. To inspect one, run `git -C /home/mahdi/nextage/bpbot-lab symbolic-ref --short HEAD`. `-C` selects that repository, `symbolic-ref` reads its checked-out branch reference, and `--short` prints just the branch name. Repeat with the Choreonoid clone path.
 
-1. Finish the installation and build steps in `bpbot-lab/docs/new_pc_setup.en.md`, sections 4-7. Adapt its example folder name `~/fujimoto` to `/home/mahdi/nextage`, and use the existing `bpbot-lab` and `choreonoid-1.7.0-lab` clones. Create a Python 3.8 conda environment named `nextage`, or edit `MY_CONDA_ENV` in this directory's `env.sh.example` to match your environment name. With that environment active, configure and build `choreonoid-1.7.0-lab`. Then copy the template with `cp /home/mahdi/nextage/mahdi-nextage/NextageManual/env.sh.example /home/mahdi/nextage/env.sh`; `cp` copies the named file to the chosen destination. The source clone alone cannot run. In this Ubuntu 18 WSL installation, conda and the lab Choreonoid binary were still missing when this file was written.
-2. Create `/home/mahdi/nextage/bpbot-lab/config/run_local.yaml` from `config/run_local.example.yaml` if it does not exist. Set `PLAY: 0`. This tells the waypoint example to preview without sending to the physical robot. `waypoint_demo.py` reads only this setting; it does not need a camera.
-3. In a terminal, run:
+## Select a mode
+
+Open `/home/mahdi/nextage/mahdi-nextage/NextageManual/run_nextage.json`. It initially contains:
+
+```json
+{
+  "mode": "simulation"
+}
+```
+
+The key `mode` chooses one branch of `run_nextage.py`. Keep `simulation` while using Choreonoid. Change only the value to `real` for hardware; there are no command-line flags. A missing or misspelled value stops the script before any robot command.
+
+## Preview in Choreonoid
+
+1. Follow `bpbot-lab/docs/new_pc_setup.en.md` to build the lab Choreonoid and environment. The source clone alone cannot run. In this Ubuntu WSL checkout, the built lab executable and its Python environment were not available for a GUI test.
+2. In an Ubuntu terminal run:
 
 ```bash
 source /home/mahdi/nextage/env.sh
@@ -26,18 +39,20 @@ cd /home/mahdi/nextage/choreonoid-1.7.0-lab
 cnoid ext/graspPlugin/BinPicking/project/waypoint_demo.cnoid
 ```
 
-`source` activates your configured planning environment in that terminal. `cd` selects the Choreonoid checkout. `cnoid` is the launcher function defined by that environment; its argument is the project that loads the model, table, and `waypoint_demo.py`. In Choreonoid, select/tick the **python script** item and press the **red Execute script** button. The Message view should end with `Waypoint demo finished.` Change the `WAYPOINTS` list in `bpbot-lab/example/waypoint_demo.py` to choose other targets. Keep `PLAY: 0` during simulation.
+`source` loads the environment into this terminal. `cd` changes to the Choreonoid checkout so the project path resolves. `cnoid` is the launcher defined by `env.sh`; the argument is the project file that loads the HIRO model. The project also contains a different, waypoint-demo Python Script item; untick that item so it cannot execute when you test the new script.
 
-A Choreonoid Python Script item can run a file with `main()` and import other Python files. It executes the file as `__main__` and adds that file's directory to Python's import path for the run. Put a sibling module next to it and write `from helper import function_name`; then call `main()` under `if __name__ == '__main__':`. A function definition alone does not run. Restart Choreonoid if an edited imported module appears cached. Do **not** load this directory's `run_nextage.py` in Choreonoid: it commands real hardware.
+3. In Choreonoid, select the World item, choose **File → Load → Python Script**, and select `/home/mahdi/nextage/mahdi-nextage/NextageManual/run_nextage.py`. Select and tick the new Python Script item, then press the red **Execute script** button. Watch the Message view for the logged opening, closing, IK planning, lift preview, and completion. Save the project from Choreonoid if you want it to remember the added script item.
 
-## Later: first physical close and lift
+The simulation mode changes the model's `LHAND_L` and `LHAND_R` sliding joints from open positions (`+0.025` and `-0.025` metres) to closed (`0` and `0` metres). It reads the displayed `LARM_JOINT5` wrist pose, plans a 5 cm upward path through 50 inverse-kinematics steps, and animates that path over 5 seconds. It does not contact the robot or run physics or collision checks. A successful preview shows that the model's inverse kinematics found this path from its current pose; it does not establish that the real workspace is clear.
 
-`run_nextage.py` is a standalone Python 2 entry point with no flags and no imports from this repository. On the configured robot-control PC, after the lab's startup procedure has made the robot ready and the left hand is positioned around an object with a clear upward path, run:
+## Run on the physical NEXTAGE
+
+After the lab's startup procedure has enabled the robot and you have checked the arm has a clear upward path, change `mode` in `run_nextage.json` to `real`. On the configured robot-control PC run:
 
 ```bash
 /usr/bin/python2 /home/mahdi/nextage/mahdi-nextage/NextageManual/run_nextage.py
 ```
 
-`/usr/bin/python2` selects the lab's system Python 2 interpreter. The path is the script to execute. It connects to the OpenRTM name service and `RobotHardware0` configured in bpbot's server, closes the left pneumatic gripper, waits one second, reads the current `LARM_JOINT5` position/orientation, increases its Z by `0.05` metres (5 cm), and asks `setTargetPose` to move over `5.0` seconds. It does not find or approach a ball, turn on servos, or verify a grasp. An accepted pose is not a collision check. The configured lab ROS/OpenRTM modules (`hrpsys` and `nextage_ros_bridge`) and the robot network are required; they are absent from this Ubuntu WSL installation. This file was syntax-checked and run only against a fake client, never against the real robot.
+`/usr/bin/python2` selects the lab's Python 2 interpreter. The path names this script. Real mode imports `hrpsys` and `nextage_ros_bridge`, connects to the OpenRTM name service at `192.168.128.10:15005` and `RobotHardware0`, opens and closes the left pneumatic gripper, reads the reported `LARM_JOINT5` position and orientation, and requests the same 5 cm Z lift over 5 seconds. It waits for left-arm interpolation to finish. This script does not enable servos, home the robot, check for obstacles, or verify that an object was grasped. Hardware mode has only been checked with a fake client here; it has not been run on the physical robot.
 
-For how to start and stop the robot on the lab PC, follow `bpbot-lab/docs/manual_lab_pc.md`. Its `startrobot` command includes `goInitial()`, which moves the robot. Its `stoprobot` CLI branch calls `goOffPose()` but does not explicitly call `servoOff()` in the checked source, so verify the controller state rather than assuming the servos are off.
+The Choreonoid Python Script item does not have a per-run argument field in this version, which is why this example uses `run_nextage.json`. For other experiments, you can read more keys from a config file in the same way.
